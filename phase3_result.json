@@ -1,0 +1,23 @@
+{
+    "vip": {
+        "status": "create-failed",
+        "error": "HTTPConnectionPool(host='192.168.55.238', port=80): Max retries exceeded with url: /api/v2/cmdb/firewall/vip (Caused by ResponseError('too many 500 error responses'))"
+    },
+    "policy_updates": [
+        {
+            "policy_id": 1,
+            "status": "error",
+            "error": "404 Client Error: Not Found for url: http://192.168.55.238/api/v2/cmdb/firewall/policy/1"
+        }
+    ],
+    "errors": [
+        {
+            "step": "create_vip",
+            "error": "HTTPConnectionPool(host='192.168.55.238', port=80): Max retries exceeded with url: /api/v2/cmdb/firewall/vip (Caused by ResponseError('too many 500 error responses'))"
+        },
+        {
+            "step": "process_policy_1",
+            "error": "404 Client Error: Not Found for url: http://192.168.55.238/api/v2/cmdb/firewall/policy/1"
+        }
+    ]
+}
