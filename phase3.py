@@ -5,29 +5,15 @@ import json
 from fortigate_api_helper import FortigateAPIHelper, logger
 
 
-def create_vip(api, vip_name, ext_ip, mapped_ip, extintf="any", port=None):
-    """
-    Create a VIP object on FortiGate (Static NAT)
-    """
+def create_vip(api, vip_name, ext_ip, mapped_ip, extintf="any"):
     vip_data = {
         "name": vip_name,
         "type": "static-nat",
         "extintf": extintf,
         "extip": ext_ip,
-        "mappedip": [
-            {
-                "range": mapped_ip
-            }
-        ],
+        "mappedip": [{"range": mapped_ip}],
         "arp-reply": "enable"
     }
-
-    if port:
-        vip_data.update({
-            "portforward": "enable",
-            "extport": str(port[0]),
-            "mappedport": str(port[1])
-        })
 
     resp = api.post("firewall/vip", vip_data)
 
@@ -41,24 +27,36 @@ def create_vip(api, vip_name, ext_ip, mapped_ip, extintf="any", port=None):
 
 def update_policy(api, policy_id, vip_name):
     """
-    Update Firewall Policy destination to VIP
+    Add VIP to destination address of firewall policy
     """
-    policy_resp = api.get(f"firewall/policy/{policy_id}")
-    policy = policy_resp.get("results")
 
-    if not policy:
-        logger.error(f"Policy ID {policy_id} not found.")
+    # ---- get policy ----
+    policy_resp = api.get("firewall/policy", params={"policyid": policy_id})
+    results = policy_resp.get("results", [])
+
+    if not results:
+        logger.error(f"Policy ID {policy_id} not found in this VDOM.")
         return None
 
-    policy["dstaddr"] = [
-        {
-            "name": vip_name
-        }
-    ]
+    policy = results[0]
 
-    policy["nat"] = "disable"
+    # ---- existing dstaddr ----
+    dstaddr = policy.get("dstaddr", [])
 
-    resp = api.put(f"firewall/policy/{policy_id}", policy)
+    # check if VIP already exists
+    if any(addr.get("name") == vip_name for addr in dstaddr):
+        logger.info(f"VIP '{vip_name}' already exists in policy {policy_id}.")
+        return {"status": "success", "message": "VIP already attached"}
+
+    # add VIP
+    dstaddr.append({"name": vip_name})
+
+    update_data = {
+        "dstaddr": dstaddr,
+        "nat": "disable"
+    }
+
+    resp = api.put(f"firewall/policy/{policy_id}", update_data)
 
     if resp.get("status") == "success":
         logger.info(f"Policy {policy_id} updated with VIP '{vip_name}'.")
@@ -69,12 +67,11 @@ def update_policy(api, policy_id, vip_name):
 
 
 def main():
-    # ---------- ثابت‌ها (مثل قبل) ----------
     fortigate_ip = "192.168.55.238"
     token = "f1kQf0Q3pjhsw11HmgkcHG5r6s4Qm9"
     vdom = "root"
 
-    base_url = f"https://{fortigate_ip}/api/v2/cmdb"
+    base_url = f"http://{fortigate_ip}/api/v2/cmdb"
 
     api = FortigateAPIHelper(
         base_url=base_url,
@@ -82,7 +79,6 @@ def main():
         vdom=vdom
     )
 
-    # ---------- ورودی‌های فاز 3 ----------
     print("\n=== Phase 3: Create VIP & Update Policy ===\n")
 
     vip_name = input("VIP name: ").strip()
@@ -91,22 +87,9 @@ def main():
     extintf = input("External interface (extintf) [any]: ").strip() or "any"
     policy_id = int(input("Firewall Policy ID: ").strip())
 
-    # ---------- اجرا ----------
-    vip_resp = create_vip(
-        api=api,
-        vip_name=vip_name,
-        ext_ip=ext_ip,
-        mapped_ip=mapped_ip,
-        extintf=extintf
-    )
+    vip_resp = create_vip(api, vip_name, ext_ip, mapped_ip, extintf)
+    policy_resp = update_policy(api, policy_id, vip_name)
 
-    policy_resp = update_policy(
-        api=api,
-        policy_id=policy_id,
-        vip_name=vip_name
-    )
-
-    # ---------- خروجی ----------
     output = {
         "vip_creation": vip_resp,
         "policy_update": policy_resp
