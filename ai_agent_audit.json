@@ -1,0 +1,15 @@
+{
+  "actions": [
+    {
+      "timestamp": "2025-12-30T11:18:33.620020",
+      "user_request": "سلام",
+      "llm_interpretation": "خطا در LLM",
+      "api_call": null,
+      "log_query": null,
+      "confirmed": false,
+      "executed": false,
+      "result": null,
+      "error": "خطا در LLM"
+    }
+  ]
+}
