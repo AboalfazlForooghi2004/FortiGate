@@ -1,0 +1,10 @@
+# Environment variables
+.env
+.env.*
+
+# Python
+__pycache__/
+*.pyc
+
+# Generated / audit files
+json.*

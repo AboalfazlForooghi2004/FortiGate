@@ -10,6 +10,28 @@
       "executed": false,
       "result": null,
       "error": "خطا در LLM"
+    },
+    {
+      "timestamp": "2025-12-31T09:27:29.291133",
+      "user_request": "hi",
+      "llm_interpretation": "خطا در LLM",
+      "api_call": null,
+      "log_query": null,
+      "confirmed": false,
+      "executed": false,
+      "result": null,
+      "error": "خطا در LLM"
+    },
+    {
+      "timestamp": "2025-12-31T09:27:34.590378",
+      "user_request": "sghl",
+      "llm_interpretation": "خطا در LLM",
+      "api_call": null,
+      "log_query": null,
+      "confirmed": false,
+      "executed": false,
+      "result": null,
+      "error": "خطا در LLM"
     }
   ]
 }
