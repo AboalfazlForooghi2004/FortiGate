@@ -1,0 +1,100 @@
+{
+    "vip": [
+        {
+            "VIP_HTTP": {
+                "status": "exists"
+            }
+        },
+        {
+            "VIP_HTTPS": {
+                "status": "exists"
+            }
+        },
+        {
+            "VIP_SSH": {
+                "status": "exists"
+            }
+        }
+    ],
+    "vipgrp": {
+        "create": {
+            "status": "exists"
+        },
+        "put_members": {
+            "status": "failed_update",
+            "http_status": 500,
+            "data": {
+                "http_method": "PUT",
+                "revision": "0daa8408ca4d26a79da4c7f7f23b5ac6",
+                "revision_changed": false,
+                "cli_error": "entry not found in datasource\n\nvalue parse error before 'VIP_HTTPS'\nCommand fail. Return code -3\n",
+                "error": -3,
+                "status": "error",
+                "http_status": 500,
+                "vdom": "root",
+                "path": "firewall",
+                "name": "vipgrp",
+                "mkey": "VIP_PUBLISH_GROUP",
+                "serial": "FGVMEVFBGOCQOQ20",
+                "version": "v7.0.2",
+                "build": 234
+            },
+            "members": [
+                "VIP_HTTP",
+                "VIP_HTTPS",
+                "VIP_SSH"
+            ]
+        }
+    },
+    "policy": {
+        "status": "failed",
+        "http_status": 500,
+        "data": {
+            "http_method": "POST",
+            "revision": "e6bbdb2fd28f9153a699345f75fcd531",
+            "revision_changed": false,
+            "cli_error": "'AUTO_PUBLISH_POLICY' is already used by firewall.policy '4'\nnode_check_object fail! for name AUTO_PUBLISH_POLICY\n\nvalue parse error before 'AUTO_PUBLISH_POLICY'\nCommand fail. Return code -651\n",
+            "error": -651,
+            "status": "error",
+            "http_status": 500,
+            "vdom": "root",
+            "path": "firewall",
+            "name": "policy",
+            "serial": "FGVMEVFBGOCQOQ20",
+            "version": "v7.0.2",
+            "build": 234
+        },
+        "payload": {
+            "name": "AUTO_PUBLISH_POLICY",
+            "srcintf": [
+                {
+                    "name": "port2"
+                }
+            ],
+            "dstintf": [
+                {
+                    "name": "port4"
+                }
+            ],
+            "srcaddr": [
+                {
+                    "name": "all"
+                }
+            ],
+            "dstaddr": [
+                {
+                    "name": "VIP_PUBLISH_GROUP"
+                }
+            ],
+            "action": "accept",
+            "schedule": "always",
+            "service": [
+                {
+                    "name": "ALL"
+                }
+            ],
+            "logtraffic": "all",
+            "nat": "disable"
+        }
+    }
+}

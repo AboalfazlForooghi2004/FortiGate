@@ -1,0 +1,24 @@
+{
+  "fortigate": {
+    "ip": "192.168.55.238",
+    "vdom": "root"
+  },
+  "summary": {
+    "total_addresses": 11,
+    "total_groups": 2,
+    "duplicate_count": 1
+  },
+  "duplicates": {
+    "ipmask:0.0.0.0 0.0.0.0": [
+      "FABRIC_DEVICE",
+      "FIREWALL_AUTH_PORTAL_ADDRESS",
+      "all"
+    ]
+  },
+  "ip_search": {
+    "192.168.10.10": {
+      "matched_groups": [],
+      "count": 0
+    }
+  }
+}

@@ -1,409 +1,248 @@
 #!/usr/bin/env python3
-# phase4.py - Fixed V2 (Compatible with new FortiOS format)
+"""
+Phase 4 Lab - FortiGate Automation (Env + Interactive Policy Fields)
 
+Features:
+- Uses .env for FortiGate IP, API token, VDOM if available
+- VIPs: HTTP, HTTPS, SSH (interactive internal IPs)
+- VIP Group: created empty if not exists, members added automatically
+- Firewall Policy: all fields collected interactively
+- Output saved to JSON in result_json folder
+"""
+
+import os
 import json
-import time
-import ipaddress
 import requests
-from typing import List, Tuple
-from fortigate_api_helper import FortigateAPIHelper, logger
+from typing import List
+from pathlib import Path
 
-# ======== CONFIG ========
-FORTIGATE_IP = '192.168.55.238'
-TOKEN = 'f1kQf0Q3pjhsw11HmgkcHG5r6s4Qm9'
-BASE_URL = f'http://{FORTIGATE_IP}/api/v2/cmdb/'
-VDOM = "root"
-# ========================
+# ================================
+# Load .env values (if available)
+# ================================
+from dotenv import load_dotenv
+load_dotenv()  # looks for .env in current directory
 
+FORTIGATE_IP = os.getenv("FORTIGATE_IP")
+FORTIGATE_TOKEN = os.getenv("FORTIGATE_TOKEN")
+FORTIGATE_VDOM = os.getenv("FORTIGATE_VDOM", "root")
+FORTIGATE_PROTOCOL = os.getenv("FORTIGATE_PROTOCOL", "http").lower()
+FORTIGATE_TIMEOUT = int(os.getenv("FORTIGATE_TIMEOUT", "10"))
 
-def validate_ip(ip: str) -> bool:
-    """Validate IP address"""
-    try:
-        ipaddress.ip_address(ip)
-        return True
-    except Exception:
-        return False
-
-
-def parse_ip_ports(raw: str) -> List[Tuple[str, int]]:
-    """Parse comma-separated IP:PORT pairs"""
-    pairs = []
-    for item in raw.split(','):
-        item = item.strip()
-        if not item:
-            continue
-        if ':' not in item:
-            raise ValueError(f"Invalid pair (expected ip:port): {item}")
-        
-        ip, port = item.split(':', 1)
-        ip = ip.strip()
-        port = port.strip()
-        
-        if not validate_ip(ip):
-            raise ValueError(f"Invalid IP: {ip}")
-        
-        try:
-            p = int(port)
-            if not (1 <= p <= 65535):
-                raise ValueError
-        except Exception:
-            raise ValueError(f"Invalid port: {port}")
-        
-        pairs.append((ip, p))
-    
-    return pairs
-
-
-def vip_exists(api: FortigateAPIHelper, name: str) -> bool:
-    """Check if VIP exists"""
-    try:
-        api.get(f'firewall/vip/{name}')
-        return True
-    except requests.exceptions.HTTPError as he:
-        resp = getattr(he, "response", None)
-        if resp is not None and resp.status_code == 404:
-            return False
-        raise
-    except Exception:
-        return False
-
-
-def check_vip_overlap(api: FortigateAPIHelper, extip: str, extport: int) -> str | None:
-    """Check if there's an overlapping VIP"""
-    try:
-        all_vips = api.get('firewall/vip').get('results', [])
-        
-        for vip in all_vips:
-            if vip.get('extip') == extip:
-                existing_port = vip.get('extport', '')
-                if existing_port:
-                    # Handle both string and int formats
-                    if isinstance(existing_port, str):
-                        if '-' in existing_port:
-                            start, end = existing_port.split('-')
-                            if int(start) <= extport <= int(end):
-                                return vip.get('name')
-                        elif int(existing_port) == extport:
-                            return vip.get('name')
-                    elif isinstance(existing_port, int) and existing_port == extport:
-                        return vip.get('name')
-        
-        return None
-    except Exception as e:
-        logger.warning(f"Could not check VIP overlap: {e}")
-        return None
-
-
-def create_vip_new_format(api: FortigateAPIHelper, name: str, extip: str, mappedip: str,
-                          port: int = None, extintf: str = "any", protocol: str = "tcp"):
-    """
-    ✅ NEW FORMAT: Compatible with FortiOS 7.4+
-    Key changes:
-    - mappedip: [{"range": "IP"}] not "IP-IP"
-    - extport/mappedport: integer not string
-    - No explicit type field
-    """
-    if not validate_ip(mappedip):
-        return {"ok": False, "error": f"Invalid mappedip: {mappedip}"}
-
-    if port is not None:
-        # Port forwarding VIP
-        payload = {
-            "name": name,
-            "extintf": extintf,
-            "extip": extip,
-            "mappedip": [{"range": mappedip}],  # ✅ Simple format
-            "portforward": "enable",
-            "protocol": protocol,
-            "extport": port,        # ✅ Integer not string
-            "mappedport": port,     # ✅ Integer not string
-            "comment": f"Auto-created VIP for {mappedip}:{port}"
-        }
+# ================================
+# Helper Functions
+# ================================
+def ask(prompt: str, default: str = None) -> str:
+    """Prompt for user input with optional default value"""
+    if default:
+        full = f"{prompt} [{default}]: "
     else:
-        # Simple static NAT
-        payload = {
-            "name": name,
-            "extintf": extintf,
-            "extip": extip,
-            "mappedip": [{"range": mappedip}],  # ✅ Simple format
-            "comment": f"Auto-created VIP for {mappedip}"
-        }
+        full = f"{prompt}: "
+    val = input(full).strip()
+    return val if val else default
 
+def split_names(s: str) -> List[str]:
+    """Split comma-separated names into trimmed list"""
+    return [x.strip() for x in s.split(",") if x.strip()] if s else []
+
+# ================================
+# FortiGate Connection Info
+# ================================
+FGT_IP = FORTIGATE_IP or ask("FortiGate IP", "192.168.55.238")
+API_TOKEN = FORTIGATE_TOKEN or ask("API Token (Bearer)")
+VDOM = FORTIGATE_VDOM
+PROTOCOL = FORTIGATE_PROTOCOL
+TIMEOUT = FORTIGATE_TIMEOUT
+
+HEADERS = {
+    "Authorization": f"Bearer {API_TOKEN}",
+    "Content-Type": "application/json"
+}
+
+BASE_URL = f"{PROTOCOL}://{FGT_IP}"
+
+# ================================
+# Output folder for JSON results
+# ================================
+RESULT_DIR = Path("result_json")
+RESULT_DIR.mkdir(exist_ok=True)
+OUTPUT_FILE = RESULT_DIR / "phase4_lab.json"
+
+# ================================
+# Network / VIP Info
+# ================================
+WAN_IF = ask("WAN Interface (extintf)", "port2")
+LAN_IF = ask("LAN Interface (dstintf)", "port4")
+EXT_IP = ask("External IP on WAN (extip)", "10.8.10.1")
+
+vip_http_ip  = ask("Internal IP for HTTP (VIP_HTTP)", "192.168.1.10")
+vip_https_ip = ask("Internal IP for HTTPS (VIP_HTTPS)", "192.168.1.11")
+vip_ssh_ip   = ask("Internal IP for SSH (VIP_SSH)", "192.168.1.12")
+
+VIP_LIST = [
+    {"name": "VIP_HTTP",  "ip": vip_http_ip,  "port": 80},
+    {"name": "VIP_HTTPS", "ip": vip_https_ip, "port": 443},
+    {"name": "VIP_SSH",   "ip": vip_ssh_ip,   "port": 22},
+]
+
+VIP_GROUP_NAME = ask("VIP Group Name", "VIP_PUBLISH_GROUP")
+POLICY_DEFAULT_NAME = "AUTO_PUBLISH_POLICY"
+
+# ================================
+# FortiGate REST Helpers
+# ================================
+def object_exists(endpoint: str, name: str) -> bool:
+    """Check if FortiGate object exists"""
     try:
-        resp = api.post('firewall/vip', payload)
-        logger.info(f"✅ VIP '{name}' created successfully")
-        return {"ok": True, "resp": resp, "payload": payload}
-    
-    except requests.exceptions.HTTPError as he:
-        resp = he.response
-        try:
-            body = resp.json()
-            error_msg = body.get('cli_error', body)
-        except:
-            error_msg = resp.text if resp else str(he)
-        
-        logger.error(f"❌ VIP creation failed - HTTP {resp.status_code}: {error_msg}")
-        return {
-            "ok": False,
-            "status": resp.status_code,
-            "error": error_msg,
-            "payload": payload
-        }
-    
-    except Exception as e:
-        logger.exception("❌ VIP creation failed")
-        return {"ok": False, "error": str(e), "payload": payload}
+        r = requests.get(f"{BASE_URL}/api/v2/cmdb/firewall/{endpoint}/{name}",
+                         headers=HEADERS, verify=False, timeout=TIMEOUT)
+        return r.status_code == 200
+    except requests.RequestException as e:
+        print(f"[ERROR] request failed when checking {endpoint}/{name}: {e}")
+        return False
 
+def create_vip(vip: dict):
+    """Create a VIP on FortiGate"""
+    if object_exists("vip", vip["name"]):
+        return {"status": "exists"}
 
-def create_vip_group_twostep(api: FortigateAPIHelper, group_name: str, 
-                              extintf: str, members: List[str]):
-    """
-    ✅ TWO-STEP VIP Group creation (like Phase4.py)
-    Step 1: Create empty group
-    Step 2: PUT members
-    """
-    # Step 1: Create empty group
-    try:
-        exists = False
-        try:
-            api.get(f'firewall/vipgrp/{group_name}')
-            exists = True
-            logger.info(f"ℹ️  VIP group '{group_name}' already exists")
-        except requests.exceptions.HTTPError as he:
-            if he.response.status_code != 404:
-                raise
-        
-        if not exists:
-            empty_payload = {
-                "name": group_name,
-                "interface": extintf,
-                "member": [],
-                "comment": "Auto-created VIP group"
-            }
-            resp = api.post('firewall/vipgrp', empty_payload)
-            logger.info(f"✅ Empty VIP group '{group_name}' created")
-            time.sleep(0.5)  # Let FortiGate process
-    
-    except Exception as e:
-        logger.error(f"❌ Failed to create empty VIP group: {e}")
-        return {"ok": False, "error": str(e), "step": "create_empty"}
-
-    # Step 2: PUT members
-    try:
-        update_payload = {
-            "interface": extintf,
-            "member": [{"name": m} for m in members],
-            "comment": f"VIP group with {len(members)} members"
-        }
-        resp = api.put(f'firewall/vipgrp/{group_name}', update_payload)
-        logger.info(f"✅ VIP group '{group_name}' updated with {len(members)} members")
-        return {"ok": True, "resp": resp, "members": members}
-    
-    except Exception as e:
-        logger.exception("❌ Failed to update VIP group members")
-        return {"ok": False, "error": str(e), "step": "put_members"}
-
-
-def create_policy_twostep(api: FortigateAPIHelper, name: str, srcintf: str, 
-                          dstintf: str, vipgrp_name: str, service: str = "ALL"):
-    """
-    ✅ TWO-STEP Policy creation (like Phase4.py)
-    Step 1: Create with dstaddr="all"
-    Step 2: Update to actual VIP Group
-    """
-    # Check if exists
-    try:
-        all_policies = api.get('firewall/policy').get('results', [])
-        existing = next((p for p in all_policies if p.get('name') == name), None)
-        
-        if existing:
-            policy_id = existing.get('policyid')
-            logger.info(f"ℹ️  Policy '{name}' already exists (ID: {policy_id})")
-        else:
-            # Step 1: Create with safe dstaddr
-            create_payload = {
-                "name": name,
-                "srcintf": [{"name": srcintf}],
-                "dstintf": [{"name": dstintf}],
-                "srcaddr": [{"name": "all"}],
-                "dstaddr": [{"name": "all"}],  # ✅ Safe initial value
-                "service": [{"name": service}],
-                "action": "accept",
-                "schedule": "always",
-                "status": "enable",
-                "nat": "disable",
-                "logtraffic": "all",
-                "comments": "Auto-created policy for VIP group"
-            }
-            
-            resp = api.post('firewall/policy', create_payload)
-            logger.info(f"✅ Policy '{name}' created")
-            
-            # Find the new policy ID
-            time.sleep(0.5)
-            all_policies = api.get('firewall/policy').get('results', [])
-            existing = next((p for p in all_policies if p.get('name') == name), None)
-            
-            if not existing:
-                return {"ok": False, "error": "Policy created but not found"}
-            
-            policy_id = existing.get('policyid')
-    
-    except Exception as e:
-        logger.exception("❌ Failed to create policy")
-        return {"ok": False, "error": str(e), "step": "create"}
-
-    # Step 2: Update to VIP Group
-    try:
-        update_payload = {
-            "dstaddr": [{"name": vipgrp_name}],
-            "comments": f"Publishing VIP group: {vipgrp_name}"
-        }
-        
-        resp = api.put(f'firewall/policy/{policy_id}', update_payload)
-        logger.info(f"✅ Policy '{name}' updated with VIP group '{vipgrp_name}'")
-        return {"ok": True, "resp": resp, "policyid": policy_id}
-    
-    except Exception as e:
-        logger.exception("❌ Failed to update policy")
-        return {"ok": False, "error": str(e), "step": "update", "policyid": policy_id}
-
-
-def yes_no(prompt: str) -> bool:
-    """Get yes/no input"""
-    return input(prompt).strip().lower() in ('y', 'yes')
-
-
-def main():
-    print("\n" + "="*60)
-    print("   Phase 4 – VIP Publish (New Compatible Format)")
-    print("="*60 + "\n")
-
-    api = FortigateAPIHelper(BASE_URL, TOKEN, vdom=VDOM)
-
-    # ===== INPUT =====
-    raw_pairs = input("Enter IP:PORT pairs (comma separated)\n[e.g. 10.10.10.10:80,10.10.10.11:443]:\n> ").strip()
-    
-    try:
-        ips_ports = parse_ip_ports(raw_pairs)
-        print(f"✅ Parsed {len(ips_ports)} IP:PORT pairs")
-    except Exception as e:
-        print(f"❌ Invalid input: {e}")
-        return 1
-
-    ext_ip = input("\nExternal IP (extip): ").strip()
-    if not validate_ip(ext_ip):
-        print("❌ Invalid External IP")
-        return 1
-
-    ext_intf = input("External interface [port1]: ").strip() or "port1"
-    vipgrp_name = input("VIP Group name [AUTO_VIP_GRP]: ").strip() or "AUTO_VIP_GRP"
-    policy_name = input("Policy name [AUTO_PUBLISH_POLICY]: ").strip() or "AUTO_PUBLISH_POLICY"
-    src_intf = input("Source interface [port1]: ").strip() or "port1"
-    dst_intf = input("Destination interface [port4]: ").strip() or "port4"
-    service = input("Service [ALL]: ").strip() or "ALL"
-
-    dry_run = yes_no("\nDry run mode? (y/n): ")
-
-    # ===== PROCESSING =====
-    results = {
-        "vips": [],
-        "vip_group": None,
-        "policy": None,
-        "errors": []
+    payload = {
+        "name": vip["name"],
+        "type": "ipv4",
+        "extintf": WAN_IF,
+        "extip": EXT_IP,
+        "mappedip": [{"range": vip["ip"]}],
+        "portforward": "disable"
     }
+
+    try:
+        r = requests.post(f"{BASE_URL}/api/v2/cmdb/firewall/vip",
+                          headers=HEADERS, json=payload, verify=False, timeout=TIMEOUT)
+        data = r.json() if r.text else r.text
+    except requests.RequestException as e:
+        return {"status": "failed", "http_status": 0, "data": str(e)}
+
+    return {"status": "created" if r.status_code in (200,201) else "failed",
+            "http_status": r.status_code, "data": data}
+
+def create_vip_group_empty(group_name: str, interface: str, comment: str = "") -> dict:
+    """Create VIP Group if not exists (empty)"""
+    if object_exists("vipgrp", group_name):
+        return {"status": "exists"}
+
+    payload = {
+        "name": group_name,
+        "interface": interface,
+        "member": [],
+        "comment": comment
+    }
+
+    try:
+        r = requests.post(f"{BASE_URL}/api/v2/cmdb/firewall/vipgrp",
+                          headers=HEADERS, json=payload, verify=False, timeout=TIMEOUT)
+        data = r.json() if r.text else r.text
+    except requests.RequestException as e:
+        return {"status": "failed_create", "http_status": 0, "data": str(e), "payload": payload}
+
+    return {"status": "created_empty" if r.status_code in (200,201) else "failed_create",
+            "http_status": r.status_code, "data": data}
+
+def vipgrp_put_members(name: str, interface: str, members: List[str], comment: str = "") -> dict:
+    """Update VIP Group members"""
+    payload = {
+        "interface": interface,
+        "member": [{"name": m} for m in members],
+        "comment": comment
+    }
+
+    try:
+        r = requests.put(f"{BASE_URL}/api/v2/cmdb/firewall/vipgrp/{name}",
+                         headers=HEADERS, json=payload, verify=False, timeout=TIMEOUT)
+        data = r.json() if r.text else r.text
+    except requests.RequestException as e:
+        return {"status": "failed_update", "http_status": 0, "data": str(e), "members": members}
+
+    return {"status": "updated_members" if r.status_code in (200,201) else "failed_update",
+            "http_status": r.status_code, "data": data, "members": members}
+
+# ================================
+# Policy creation (interactive all fields)
+# ================================
+def create_policy_interactive(vip_group_name: str):
+    """Create firewall policy interactively with user input"""
+    print("\n-- Enter Policy fields (leave empty to use default) --")
+
+    policy_name = ask("Policy name", POLICY_DEFAULT_NAME)
+    srcintf_list = [{"name": n} for n in split_names(ask("Source interfaces (comma-separated)", WAN_IF))]
+    dstintf_list = [{"name": n} for n in split_names(ask("Destination interfaces (comma-separated)", LAN_IF))]
+    srcaddr_list = [{"name": n} for n in split_names(ask("Source addresses (comma-separated, e.g. all)", "all"))]
+    dstaddr_list = [{"name": n} for n in split_names(ask("Destination addresses (comma-separated, VIP group)", vip_group_name))]
+    action = ask("Action (accept/deny)", "accept")
+    schedule = ask("Schedule (name or always)", "always")
+    service_list = [{"name": n} for n in split_names(ask("Service(s) comma-separated, e.g. ALL or HTTP,HTTPS", "ALL"))]
+    logtraffic = ask("Logtraffic (all/utm/disable)", "all")
+    nat = ask("NAT (enable/disable)", "disable")
+
+    payload = {
+        "name": policy_name,
+        "srcintf": srcintf_list,
+        "dstintf": dstintf_list,
+        "srcaddr": srcaddr_list,
+        "dstaddr": dstaddr_list,
+        "action": action,
+        "schedule": schedule,
+        "service": service_list,
+        "logtraffic": logtraffic,
+        "nat": nat
+    }
+
+    if object_exists("policy", policy_name):
+        return {"status": "exists", "policy": policy_name}
+
+    try:
+        r = requests.post(f"{BASE_URL}/api/v2/cmdb/firewall/policy",
+                          headers=HEADERS, json=payload, verify=False, timeout=TIMEOUT)
+        data = r.json() if r.text else r.text
+    except requests.RequestException as e:
+        return {"status": "failed_create", "http_status": 0, "data": str(e), "payload": payload}
+
+    return {"status": "created" if r.status_code in (200,201) else "failed",
+            "http_status": r.status_code, "data": data, "payload": payload}
+
+# ================================
+# MAIN
+# ================================
+def main():
+    report = {"vip": [], "vipgrp": {}, "policy": {}}
+    print("=== Phase 4 Lab Started ===")
+
+    # 1) VIPs
     vip_names = []
+    for vip in VIP_LIST:
+        res = create_vip(vip)
+        report["vip"].append({vip["name"]: res})
+        if res.get("status") in ("created", "exists"):
+            vip_names.append(vip["name"])
 
-    print("\n" + "="*60)
-    print("STEP 1: CREATING VIPs (New Format)")
-    print("="*60)
+    # 2) VIP Group
+    grp_res = create_vip_group_empty(VIP_GROUP_NAME, WAN_IF, "Auto-generated by script")
+    report["vipgrp"]["create"] = grp_res
 
-    for mapped_ip, port in ips_ports:
-        vip_name = f"VIP_{mapped_ip.replace('.', '_')}_{port}"
-        print(f"\n[{len(vip_names)+1}/{len(ips_ports)}] Processing: {vip_name}")
-
-        # Check existence
-        try:
-            if vip_exists(api, vip_name):
-                logger.info(f"ℹ️  VIP already exists: {vip_name}")
-                vip_names.append(vip_name)
-                results["vips"].append({"name": vip_name, "status": "exists"})
-                continue
-        except Exception as e:
-            results["errors"].append({"vip": vip_name, "error": f"check_failed: {e}"})
-            continue
-
-        # Check overlap
-        overlap = check_vip_overlap(api, ext_ip, port)
-        if overlap:
-            logger.warning(f"⚠️  Overlap with: {overlap}")
-            continue
-
-        if dry_run:
-            vip_names.append(vip_name)
-            results["vips"].append({"name": vip_name, "status": "dry-run"})
-            print("  [DRY RUN] Would create VIP")
-            continue
-
-        # ✅ Create with new format
-        res = create_vip_new_format(api, vip_name, ext_ip, mapped_ip, 
-                                    port=port, extintf=ext_intf)
-
-        if res.get("ok"):
-            vip_names.append(vip_name)
-            results["vips"].append({"name": vip_name, "status": "created"})
-            print(f"  ✅ Created")
-        else:
-            results["errors"].append({"vip": vip_name, "result": res})
-            print(f"  ❌ Failed: {res.get('error')}")
-
-        time.sleep(0.5)
-
-    if not vip_names:
-        print("\n❌ No VIPs created. Aborting.")
-        return 1
-
-    # ===== VIP GROUP (Two-Step) =====
-    print("\n" + "="*60)
-    print("STEP 2: CREATING VIP GROUP (Two-Step Method)")
-    print("="*60)
-    
-    if dry_run:
-        results["vip_group"] = {"name": vipgrp_name, "status": "dry-run"}
-        print(f"[DRY RUN] Would create VIP group")
+    if vip_names:
+        put_res = vipgrp_put_members(VIP_GROUP_NAME, WAN_IF, vip_names, "Auto-generated by script")
+        report["vipgrp"]["put_members"] = put_res
     else:
-        grp_res = create_vip_group_twostep(api, vipgrp_name, ext_intf, vip_names)
-        results["vip_group"] = grp_res
+        report["vipgrp"]["put_members"] = {"status": "no_vips_to_add"}
 
-    # ===== POLICY (Two-Step) =====
-    print("\n" + "="*60)
-    print("STEP 3: CREATING POLICY (Two-Step Method)")
-    print("="*60)
-    
-    if dry_run:
-        results["policy"] = {"name": policy_name, "status": "dry-run"}
-        print(f"[DRY RUN] Would create policy")
-    else:
-        pol_res = create_policy_twostep(api, policy_name, src_intf, 
-                                        dst_intf, vipgrp_name, service)
-        results["policy"] = pol_res
+    # 3) Policy
+    policy_res = create_policy_interactive(VIP_GROUP_NAME)
+    report["policy"] = policy_res
 
-    # ===== SAVE =====
-    with open("phase4_result.json", "w", encoding="utf-8") as f:
-        json.dump(results, f, indent=2, ensure_ascii=False)
+    # 4) Save output
+    with OUTPUT_FILE.open("w", encoding="utf-8") as f:
+        json.dump(report, f, indent=4)
 
-    # ===== SUMMARY =====
-    print("\n" + "="*60)
-    print("SUMMARY")
-    print("="*60)
-    print(f"VIPs created  : {len(vip_names)}/{len(ips_ports)}")
-    print(f"VIP Group     : {results.get('vip_group', {}).get('ok', 'N/A')}")
-    print(f"Policy        : {results.get('policy', {}).get('ok', 'N/A')}")
-    print(f"Errors        : {len(results['errors'])}")
-    print(f"\n✅ Results saved to phase4_result.json\n")
+    print("=== DONE ===")
+    print(f" Phase 4 Lab completed! Output saved to {OUTPUT_FILE}")
 
-    return 0 if not results['errors'] else 1
-
-
-if __name__ == '__main__':
-    exit(main())
+if __name__ == "__main__":
+    main()

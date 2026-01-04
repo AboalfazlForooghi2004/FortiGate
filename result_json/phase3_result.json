@@ -1,0 +1,33 @@
+{
+    "vip_creation": {
+        "http_method": "POST",
+        "revision": "22adec85920e4215c6770a35d0b3d968",
+        "revision_changed": true,
+        "old_revision": "9fec27f7cc5371e0a5907ab5d9c621aa",
+        "mkey": "test10",
+        "status": "success",
+        "http_status": 200,
+        "vdom": "root",
+        "path": "firewall",
+        "name": "vip",
+        "serial": "FGVMEVFBGOCQOQ20",
+        "version": "v7.0.2",
+        "build": 234
+    },
+    "policy_update": {
+        "http_method": "PUT",
+        "revision": "9645077474cd7d600d0f27649efca00e",
+        "revision_changed": true,
+        "old_revision": "bd211029555223ee7c7dc7bcc8fa4fbd",
+        "mkey": "3",
+        "status": "success",
+        "http_status": 200,
+        "vdom": "root",
+        "path": "firewall",
+        "name": "policy",
+        "serial": "FGVMEVFBGOCQOQ20",
+        "version": "v7.0.2",
+        "build": 234
+    },
+    "timestamp": "2026-01-04T03:43:24.836777"
+}

@@ -1,0 +1,15 @@
+{
+  "check": 3,
+  "timestamp": "2026-01-04T03:48:43.392416",
+  "WAN1": {
+    "interface": "port1",
+    "status": "DOWN"
+  },
+  "WAN2": {
+    "interface": "port2",
+    "status": "UP"
+  },
+  "active_vip": "VIP_FAILOVER_WAN2",
+  "failovers": 0,
+  "mode": "LIVE"
+}

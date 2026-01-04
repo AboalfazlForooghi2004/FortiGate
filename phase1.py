@@ -2,18 +2,29 @@
 """
 Phase 1 - Export FortiGate Addresses and Groups
 
-Extracts all Address Objects and Address Groups from FortiGate
-and saves them to fortigate_data.json
+This script connects to a FortiGate device using the API and:
+1. Exports all Address Objects.
+2. Exports all Address Groups.
+3. Saves the results to result_json/fortigate_data.json.
+4. Displays a human-readable summary table.
+
+Requirements:
+- .env file with FORTIGATE_IP, FORTIGATE_TOKEN, (optional) FORTIGATE_VDOM
+- fortigate_api_helper.py with FortigateAPIHelper class
 """
+
 import os
 import json
-from fortigate_api_helper import FortigateAPIHelper, logger
 from dotenv import load_dotenv
+from fortigate_api_helper import FortigateAPIHelper, logger
 
+# ---------------------------- Utility Functions ----------------------------
 
-
-def summarize_address(addr):
-    """Generate a human-readable summary of an address object"""
+def summarize_address(addr: dict) -> str:
+    """
+    Generate a human-readable summary of an address object.
+    Supports 'ipmask', 'iprange', 'fqdn', 'wildcard', and generic types.
+    """
     if addr.get("subnet"):
         return addr["subnet"]
     if addr.get("start-ip") and addr.get("end-ip"):
@@ -27,59 +38,72 @@ def summarize_address(addr):
     return "unknown"
 
 
-def trim(s, width=60):
-    """Trim string to specified width"""
+def trim(s: str, width: int = 60) -> str:
+    """Trim a string to the specified width, adding ellipsis if too long."""
     s = str(s)
     return s if len(s) <= width else s[: width - 3] + "..."
 
 
-def print_table(rows, headers):
-    """Print a formatted table"""
+def print_table(rows: list[list[str]], headers: list[str]):
+    """
+    Print a formatted table in console.
+    - rows: List of row lists
+    - headers: Column headers
+    """
     if not rows:
         return
     
+    # Determine column widths
     col_widths = []
     for i, h in enumerate(headers):
-        col_widths.append(
-            max(len(h), *(len(trim(r[i])) for r in rows))
-        )
+        col_widths.append(max(len(h), *(len(trim(r[i])) for r in rows)))
     
     sep = "  "
+    
+    # Print header
     header_line = sep.join(h.ljust(w) for h, w in zip(headers, col_widths))
     print(header_line)
     print("-" * len(header_line))
     
+    # Print rows
     for r in rows:
         print(sep.join(trim(c).ljust(w) for c, w in zip(r, col_widths)))
-    
     print()
 
 
-def export_fortigate_data(api):
+# ---------------------------- Export Functions ----------------------------
+
+def export_fortigate_data(api: FortigateAPIHelper) -> dict:
     """
-    Export all addresses and address groups from FortiGate
+    Export all addresses and address groups from FortiGate.
     
     Returns:
-        dict: Contains addresses, groups, and summary statistics
+        dict: {
+            "addresses": [...],
+            "groups": [...],
+            "summary": {...}
+        }
     """
+    # Fetch all address objects
     logger.info("Fetching Address Objects...")
     addresses_response = api.get('firewall/address')
     addresses = addresses_response.get('results', [])
-    logger.info(f"✅ Found {len(addresses)} Address Objects")
+    logger.info(f" Found {len(addresses)} Address Objects")
     
+    # Fetch all address groups
     logger.info("Fetching Address Groups...")
     groups_response = api.get('firewall/addrgrp')
     groups = groups_response.get('results', [])
-    logger.info(f"✅ Found {len(groups)} Address Groups")
+    logger.info(f" Found {len(groups)} Address Groups")
     
-    # Generate summary statistics
+    # Create summary statistics
     summary = {
         "total_addresses": len(addresses),
         "total_groups": len(groups),
         "address_types": {}
     }
     
-    # Count address types
+    # Count addresses by type
     for addr in addresses:
         addr_type = addr.get('type', 'unknown')
         summary["address_types"][addr_type] = summary["address_types"].get(addr_type, 0) + 1
@@ -91,13 +115,18 @@ def export_fortigate_data(api):
     }
 
 
-def display_export_data(data):
-    """Display exported data in a readable format"""
+def display_export_data(data: dict):
+    """
+    Display exported data in a readable console format:
+    - Summary
+    - Address Objects table
+    - Address Groups table
+    """
     addresses = data.get("addresses", [])
     groups = data.get("groups", [])
     summary = data.get("summary", {})
     
-    # ================= SUMMARY =================
+    # ------------------- SUMMARY -------------------
     print("\n" + "="*60)
     print("           FortiGate Export Summary")
     print("="*60)
@@ -111,7 +140,7 @@ def display_export_data(data):
     
     print("="*60 + "\n")
     
-    # ================= ADDRESSES =================
+    # ------------------- ADDRESSES -------------------
     if addresses:
         addr_rows = []
         for a in addresses:
@@ -122,14 +151,11 @@ def display_export_data(data):
             addr_rows.append([name, addr_type, value, comment])
         
         print("Address Objects:")
-        print_table(
-            addr_rows,
-            ["NAME", "TYPE", "VALUE", "COMMENT / UUID"]
-        )
+        print_table(addr_rows, ["NAME", "TYPE", "VALUE", "COMMENT / UUID"])
     else:
         print("No addresses found.\n")
     
-    # ================= GROUPS =================
+    # ------------------- GROUPS -------------------
     if groups:
         grp_rows = []
         for g in groups:
@@ -145,56 +171,51 @@ def display_export_data(data):
             grp_rows.append([name, members_s])
         
         print("Address Groups:")
-        print_table(
-            grp_rows,
-            ["GROUP NAME", "MEMBERS"]
-        )
+        print_table(grp_rows, ["GROUP NAME", "MEMBERS"])
     else:
         print("No address groups found.\n")
 
 
+# ---------------------------- Main Execution ------------------------------
+
 def main():
-    """Main execution function"""
-    # Configuration
+    """Main execution function: load env, connect, export, save, display."""
     load_dotenv()
     fortigate_ip = os.getenv("FORTIGATE_IP")
     token = os.getenv("FORTIGATE_TOKEN")
     vdom = os.getenv("FORTIGATE_VDOM", "root")
-
     
     base_url = f'http://{fortigate_ip}/api/v2/cmdb/'
-    
+
     try:
-        # Initialize API helper
-        api = FortigateAPIHelper(
-            base_url=base_url,
-            token=token,
-            vdom=vdom
-        )
-        
+        # Initialize FortiGate API helper
+        api = FortigateAPIHelper(base_url=base_url, token=token, vdom=vdom)
         logger.info("Starting FortiGate data export...")
         
         # Export data
         data = export_fortigate_data(api)
         
-        # Save to file
-        output_file = "fortigate_data.json"
+        # Ensure result_json folder exists
+        result_folder = "result_json"
+        os.makedirs(result_folder, exist_ok=True)
+
+        # Save to JSON file inside result_json/
+        output_file = os.path.join(result_folder, "fortigate_data.json")
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
+        logger.info(f"Data exported to {output_file}")
         
-        logger.info(f" Data exported to {output_file}")
-        
-        # Display summary
+        # Display summary and tables
         display_export_data(data)
         
-        print(f"\n Full data saved to: {output_file}")
-        print("You can view it with: python pretty_fortigate.py\n")
+        print(f"\nFull data saved to: {output_file}")
+        print("You can view it in a pretty format using: python pretty_fortigate.py\n")
         
         return 0
     
     except Exception as e:
-        logger.exception("❌ Phase 1 failed with error")
-        print(f"\n❌ Error: {e}\n")
+        logger.exception(" Phase 1 failed with error")
+        print(f"\n Error: {e}\n")
         return 1
 
 
