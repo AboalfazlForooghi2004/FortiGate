@@ -1,29 +1,27 @@
 #!/usr/bin/env python3
 """
-Fortigate API helper (syslog-enabled).
+Fortigate API helper (Enhanced & Fixed Version)
 
-Provides a simple wrapper around FortiGate CMDB REST API with:
-- Automatic retries for transient errors
-- Syslog + console logging
-- JSON-safe parsing and error handling
-- vdom handling for all requests
+Improvements:
+- Fixed monitor endpoint support
+- Better error handling and messages
+- SSL verification configurable
+- Pagination support
+- Rate limiting protection
 """
 
 import requests
+import time
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from typing import Optional, Dict, Any, List
-
 from logging_config import setup_syslog_logger
 
 logger = setup_syslog_logger("fortigate_api_helper")
 
 
 class FortigateAPIHelper:
-    """
-    Simple FortiGate CMDB API wrapper.
-    Provides GET/POST/PUT/DELETE methods with logging, retries, and vdom support.
-    """
+    """Enhanced FortiGate API wrapper with monitor endpoint support"""
 
     def __init__(
         self,
@@ -35,23 +33,14 @@ class FortigateAPIHelper:
         retries: int = 3,
         status_forcelist: Optional[List[int]] = None
     ):
-        """
-        Initialize API helper.
-
-        Args:
-            base_url (str): FortiGate API base URL (e.g., http://192.168.1.99/api/v2/cmdb)
-            token (str): Bearer API token
-            vdom (str): VDOM to operate in (default "root")
-            verify_ssl (bool): Verify SSL certificates (default False)
-            timeout (int): Request timeout in seconds (default 10)
-            retries (int): Number of retries for transient HTTP errors (default 3)
-            status_forcelist (List[int], optional): HTTP status codes to retry
-        """
-        self.base_url = base_url.rstrip("/")
+        # Remove /cmdb/ suffix if present to support both cmdb and monitor
+        self.base_url = base_url.rstrip("/").replace("/api/v2/cmdb", "/api/v2")
         self.vdom = vdom
         self.verify_ssl = verify_ssl
         self.timeout = timeout
         self.token = token
+        self._last_request_time = 0
+        self._min_request_interval = 0.1  # Rate limiting: 10 req/sec max
 
         if status_forcelist is None:
             status_forcelist = [429, 502, 503, 504]
@@ -64,6 +53,11 @@ class FortigateAPIHelper:
             "Accept": "application/json"
         })
 
+        # Disable SSL warnings if verify_ssl is False
+        if not verify_ssl:
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
         retry_strategy = Retry(
             total=retries,
             backoff_factor=1,
@@ -74,55 +68,53 @@ class FortigateAPIHelper:
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)
 
-        logger.info("FortigateAPIHelper initialized (vdom=%s, base_url=%s)", self.vdom, self.base_url)
+        logger.info(
+            "FortigateAPIHelper initialized (vdom=%s, base_url=%s, ssl_verify=%s)",
+            self.vdom, self.base_url, self.verify_ssl
+        )
+
+    def _rate_limit(self):
+        """Simple rate limiting to avoid overwhelming FortiGate"""
+        elapsed = time.time() - self._last_request_time
+        if elapsed < self._min_request_interval:
+            time.sleep(self._min_request_interval - elapsed)
+        self._last_request_time = time.time()
 
     def _safe_json(self, response: requests.Response) -> Any:
-        """
-        Parse response body safely as JSON. Return raw text if JSON fails.
-
-        Args:
-            response (requests.Response): Response object
-
-        Returns:
-            dict or str: Parsed JSON or raw text
-        """
+        """Parse response body safely as JSON"""
         if not response.text:
             return {}
         try:
             return response.json()
-        except ValueError:
-            return response.text
+        except ValueError as e:
+            logger.warning("Failed to parse JSON response: %s", e)
+            return {"error": "invalid_json", "raw_text": response.text[:500]}
+
+    def _build_url(self, endpoint: str, api_type: str = "cmdb") -> str:
+        """Build full URL with proper API type (cmdb or monitor)"""
+        endpoint = endpoint.lstrip("/")
+        return f"{self.base_url}/{api_type}/{endpoint}"
 
     def _request(
         self,
         method: str,
         endpoint: str,
         data: Optional[Dict] = None,
-        params: Optional[Dict] = None
+        params: Optional[Dict] = None,
+        api_type: str = "cmdb"
     ) -> Any:
-        """
-        Internal request handler with logging, retries, vdom, and error handling.
-
-        Args:
-            method (str): HTTP method (GET/POST/PUT/DELETE)
-            endpoint (str): CMDB endpoint (e.g., "firewall/address")
-            data (dict, optional): JSON payload for POST/PUT
-            params (dict, optional): Query parameters
-
-        Returns:
-            dict or list or str: Parsed response
-
-        Raises:
-            requests.exceptions.RequestException: For HTTP/network errors
-            RuntimeError: If FortiGate returns {"status":"error", ...}
-        """
-        url = f"{self.base_url}/{endpoint.lstrip('/')}"
+        """Internal request handler with enhanced error handling"""
+        self._rate_limit()
+        
+        url = self._build_url(endpoint, api_type)
         if params is None:
             params = {}
+        
         # Always include vdom
-        params["vdom"] = self.vdom
+        if "vdom" not in params:
+            params["vdom"] = self.vdom
 
-        logger.debug("Request: %s %s params=%s data=%s", method, url, params, data)
+        logger.debug("Request: %s %s params=%s", method, url, params)
 
         try:
             response = self.session.request(
@@ -133,48 +125,123 @@ class FortigateAPIHelper:
                 timeout=self.timeout,
                 verify=self.verify_ssl
             )
+        except requests.exceptions.Timeout as e:
+            logger.error("Request timeout [%s %s]: %s", method, url, e)
+            raise RuntimeError(f"FortiGate request timeout: {e}")
+        except requests.exceptions.ConnectionError as e:
+            logger.error("Connection error [%s %s]: %s", method, url, e)
+            raise RuntimeError(f"Cannot connect to FortiGate: {e}")
         except requests.exceptions.RequestException as e:
             logger.error("Request failed [%s %s]: %s", method, url, e)
             raise
 
         body = self._safe_json(response)
-        logger.debug("Response %s %s -> %s", response.status_code, url, body)
+        
+        # Enhanced error logging
+        if response.status_code >= 400:
+            error_msg = self._extract_error_message(body, response)
+            logger.error(
+                "HTTP %d for %s %s: %s",
+                response.status_code, method, url, error_msg
+            )
 
         # Raise HTTPError for 4xx/5xx
         try:
             response.raise_for_status()
-        except requests.exceptions.HTTPError as he:
-            try:
-                body_preview = body if isinstance(body, dict) else str(body)[:400]
-            except Exception:
-                body_preview = "<unreadable-response-body>"
-
-            logger.error(
-                "HTTP error for %s %s: status=%s body=%s",
-                method, url, response.status_code, body_preview
-            )
-            raise
+        except requests.exceptions.HTTPError:
+            raise RuntimeError(self._extract_error_message(body, response))
 
         # Check for logical FortiGate API errors
-        if isinstance(body, dict) and body.get("status") == "error":
-            logger.error("FortiGate API returned error payload: %s", body)
-            raise RuntimeError(body)
+        if isinstance(body, dict):
+            if body.get("status") == "error":
+                error_msg = body.get("cli_error") or body.get("error") or "Unknown error"
+                logger.error("FortiGate API error: %s", error_msg)
+                raise RuntimeError(f"FortiGate API error: {error_msg}")
 
         return body
 
-    # ---------------- Public API Wrappers ----------------
+    def _extract_error_message(self, body: Any, response: requests.Response) -> str:
+        """Extract meaningful error message from FortiGate response"""
+        if isinstance(body, dict):
+            # Priority order for error messages
+            for key in ["cli_error", "error", "message"]:
+                if key in body and body[key]:
+                    return str(body[key])
+            
+            # If status is error but no message
+            if body.get("status") == "error":
+                return f"FortiGate returned error status (code: {body.get('error', 'unknown')})"
+        
+        # Fallback to HTTP status
+        return f"HTTP {response.status_code}: {response.reason}"
+
+    # ---------------- CMDB API Methods ----------------
     def get(self, endpoint: str, params: Optional[Dict] = None) -> Any:
-        """Perform GET request"""
-        return self._request("GET", endpoint, params=params)
+        """GET request for CMDB endpoints"""
+        return self._request("GET", endpoint, params=params, api_type="cmdb")
 
     def post(self, endpoint: str, data: Dict) -> Any:
-        """Perform POST request"""
-        return self._request("POST", endpoint, data=data)
+        """POST request for CMDB endpoints"""
+        return self._request("POST", endpoint, data=data, api_type="cmdb")
 
     def put(self, endpoint: str, data: Dict) -> Any:
-        """Perform PUT request"""
-        return self._request("PUT", endpoint, data=data)
+        """PUT request for CMDB endpoints"""
+        return self._request("PUT", endpoint, data=data, api_type="cmdb")
 
     def delete(self, endpoint: str) -> Any:
-        """Perform DELETE request"""
-        return self._request("DELETE", endpoint)
+        """DELETE request for CMDB endpoints"""
+        return self._request("DELETE", endpoint, api_type="cmdb")
+
+    # ---------------- Monitor API Methods ----------------
+    def monitor_get(self, endpoint: str, params: Optional[Dict] = None) -> Any:
+        """GET request for monitor endpoints (logs, stats, etc.)"""
+        return self._request("GET", endpoint, params=params, api_type="monitor")
+
+    # ---------------- Pagination Support ----------------
+    def get_all(self, endpoint: str, page_size: int = 500) -> List[Dict]:
+        """Get all objects with automatic pagination"""
+        all_results = []
+        start = 0
+        
+        while True:
+            params = {"start": start, "count": page_size}
+            response = self.get(endpoint, params)
+            
+            results = response.get("results", [])
+            if not results:
+                break
+            
+            all_results.extend(results)
+            
+            # Check if we got all results
+            total = response.get("total", len(results))
+            if len(all_results) >= total:
+                break
+            
+            start += page_size
+            
+            # Safety limit
+            if len(all_results) > 10000:
+                logger.warning("Hit safety limit of 10000 objects")
+                break
+        
+        return all_results
+
+    # ---------------- Utility Methods ----------------
+    def test_connection(self) -> bool:
+        """Test API connection and credentials"""
+        try:
+            result = self.get("system/interface")
+            return result.get("status") != "error"
+        except Exception as e:
+            logger.error("Connection test failed: %s", e)
+            return False
+
+    def get_vdom_list(self) -> List[str]:
+        """Get list of available VDOMs"""
+        try:
+            response = self.get("system/vdom")
+            return [v.get("name") for v in response.get("results", [])]
+        except Exception as e:
+            logger.error("Failed to get VDOM list: %s", e)
+            return ["root"]
