@@ -54,12 +54,12 @@ try:
     # Test connection
     if not api.test_connection():
         logger.error("Failed to connect to FortiGate")
-        print("❌ Cannot connect to FortiGate. Check IP, token, and network.")
+        print(" Cannot connect to FortiGate. Check IP, token, and network.")
         sys.exit(1)
         
 except Exception as e:
     logger.error(f"Failed to initialize API: {e}")
-    print(f"❌ API initialization failed: {e}")
+    print(f" API initialization failed: {e}")
     sys.exit(1)
 
 # ================= CONFIG ==================
@@ -186,7 +186,7 @@ def validate_vips():
     
     if missing:
         logger.error(f"VIPs not found: {', '.join(missing)}")
-        print(f"\n❌ Error: VIPs not found: {', '.join(missing)}")
+        print(f"\n Error: VIPs not found: {', '.join(missing)}")
         print("Please create these VIPs before running failover monitor.")
         return False
     return True

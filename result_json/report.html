@@ -1,0 +1,269 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FortiGate Traffic Analysis</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            padding: 30px;
+            background: #f8f9fa;
+        }
+        .stat-card {
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            text-align: center;
+            transition: transform 0.3s ease;
+        }
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 12px rgba(0,0,0,0.15);
+        }
+        .stat-card h3 {
+            color: #667eea;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        .stat-card p {
+            color: #666;
+            font-size: 1.1em;
+        }
+        .content {
+            padding: 30px;
+        }
+        .section {
+            margin-bottom: 30px;
+        }
+        .section h2 {
+            color: #333;
+            border-bottom: 3px solid #667eea;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        th {
+            background: #667eea;
+            color: white;
+            padding: 15px;
+            text-align: left;
+            font-weight: 600;
+        }
+        td {
+            padding: 12px 15px;
+            border-bottom: 1px solid #eee;
+        }
+        tr:hover {
+            background: #f8f9fa;
+        }
+        .badge {
+            display: inline-block;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 600;
+        }
+        .badge-success { background: #d4edda; color: #155724; }
+        .badge-warning { background: #fff3cd; color: #856404; }
+        .badge-danger { background: #f8d7da; color: #721c24; }
+        .footer {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+            border-top: 1px solid #eee;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🛡️ FortiGate Traffic Analysis</h1>
+            <p>Generated on 2026-01-05 12:22:01</p>
+        </div>
+
+        <div class="stats">
+            <div class="stat-card">
+                <h3>2450</h3>
+                <p>Total Logs</p>
+            </div>
+            <div class="stat-card">
+                <h3>385</h3>
+                <p>Blocked Traffic</p>
+            </div>
+            <div class="stat-card">
+                <h3>2065</h3>
+                <p>Allowed Traffic</p>
+            </div>
+            <div class="stat-card">
+                <h3>47</h3>
+                <p>Unique Sources</p>
+            </div>
+        </div>
+
+        <div class="content">
+            
+            <div class="section">
+                <h2>📊 Top Source IPs</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Source IP</th>
+                            <th>Request Count</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        
+                        <tr>
+                            <td>1</td>
+                            <td><strong>192.168.1.10</strong></td>
+                            <td>850</td>
+                            <td>
+                                
+                                <span class="badge badge-success">Active</span>
+                                
+                            </td>
+                        </tr>
+                        
+                        <tr>
+                            <td>2</td>
+                            <td><strong>192.168.1.15</strong></td>
+                            <td>620</td>
+                            <td>
+                                
+                                <span class="badge badge-success">Active</span>
+                                
+                            </td>
+                        </tr>
+                        
+                        <tr>
+                            <td>3</td>
+                            <td><strong>10.0.0.50</strong></td>
+                            <td>150</td>
+                            <td>
+                                
+                                <span class="badge badge-danger">Blocked</span>
+                                
+                            </td>
+                        </tr>
+                        
+                    </tbody>
+                </table>
+            </div>
+            
+
+            
+            <div class="section">
+                <h2>🚫 Blocked Traffic</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Source IP</th>
+                            <th>Destination IP</th>
+                            <th>Service</th>
+                            <th>Reason</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        
+                        <tr>
+                            <td>10.0.0.50</td>
+                            <td>192.168.1.10</td>
+                            <td>SSH</td>
+                            <td><span class="badge badge-warning">Policy Deny</span></td>
+                        </tr>
+                        
+                        <tr>
+                            <td>10.0.0.51</td>
+                            <td>192.168.1.11</td>
+                            <td>RDP</td>
+                            <td><span class="badge badge-warning">Blocked by IPS</span></td>
+                        </tr>
+                        
+                    </tbody>
+                </table>
+            </div>
+            
+
+            
+            <div class="section">
+                <h2>🌐 VIP Configuration</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>VIP Name</th>
+                            <th>External IP</th>
+                            <th>Mapped IP</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        
+                        <tr>
+                            <td><strong>VIP_WEB_SERVER_1</strong></td>
+                            <td>10.8.10.10</td>
+                            <td>192.168.1.10</td>
+                            <td><span class="badge badge-success">Active</span></td>
+                        </tr>
+                        
+                        <tr>
+                            <td><strong>VIP_WEB_SERVER_2</strong></td>
+                            <td>10.8.10.11</td>
+                            <td>192.168.1.11</td>
+                            <td><span class="badge badge-success">Active</span></td>
+                        </tr>
+                        
+                    </tbody>
+                </table>
+            </div>
+            
+        </div>
+
+        <div class="footer">
+            <p>FortiGate Automation System | Generated by Jinja2 Template Engine</p>
+        </div>
+    </div>
+</body>
+</html>
