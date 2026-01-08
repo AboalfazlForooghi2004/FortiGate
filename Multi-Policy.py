@@ -443,7 +443,7 @@ def demo_jinja2_integration():
     html_report = generate_html_report(report_data)
     
     # Save report
-    report_file = Path("result_json/report.html")
+    report_file = Path("templates/report.html")
     report_file.write_text(html_report)
     print(f"✅ HTML Report saved to: {report_file}")
     
