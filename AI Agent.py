@@ -167,62 +167,67 @@ class FortiGateLogAnalyzer:
             logger.error(f"Cache save error: {e}")
 
     def fetch_logs(self, log_query: LogQuery) -> Dict[str, any]:
-     result = {"success": False, "logs": [], "count": 0}
-    try:
-        endpoint = f"log/device/{log_query.category}"
-        if log_query.subcategory:
-            endpoint += f"/{log_query.subcategory}"
-        params = {"rows": min(log_query.limit, 1000)}
-        if log_query.start_time:
-            params["start"] = log_query.start_time
-        if log_query.filters:
-            params.update(log_query.filters)
-        
-        logger.info(f"Fetching logs: {endpoint} with params {params}")
-        
-        # Try monitor_get first, fallback to manual request
+        result = {"success": False, "logs": [], "count": 0}
         try:
-            if hasattr(self.api, 'monitor_get'):
-                resp = self.api.monitor_get(endpoint, params)
-                logs = resp.get('results', [])
-            else:
-                raise AttributeError("No monitor_get method")
-        except (AttributeError, Exception) as e:
-            logger.warning(f"monitor_get failed, using fallback: {e}")
-            # Fallback: manual request
-            base_url = self.api.base_url.replace('/cmdb/', '/monitor/')
-            url = f"{base_url}{endpoint}"
-            headers = {"Authorization": f"Bearer {self.api.token}"}
-            params['vdom'] = self.api.vdom
-            
-            import urllib3
-            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-            
-            resp = requests.get(url, headers=headers, params=params, 
-                              timeout=30, verify=False)
-            
-            if resp.status_code != 200:
-                result["error"] = f"HTTP {resp.status_code}: {resp.text[:200]}"
-                return result
-            
-            data = resp.json()
-            logs = data.get('results', [])
-        
-        result["success"] = True
-        result["logs"] = logs
-        result["count"] = len(logs)
-        
-        self.cache["logs"].extend(logs)
-        self.cache["last_update"] = datetime.now().isoformat()
-        self._save_cache()
-        
-        logger.info(f"Fetched {len(logs)} logs successfully")
-        
-    except Exception as e:
-        result["error"] = str(e)
-        logger.error(f"Fetch logs error: {e}")
-    
-    return result
+            endpoint = f"log/device/{log_query.category}"
+            if log_query.subcategory:
+                endpoint += f"/{log_query.subcategory}"
+            params = {"rows": min(log_query.limit, 1000)}
+            if log_query.start_time:
+                params["start"] = log_query.start_time
+            if log_query.filters:
+                params.update(log_query.filters)
+
+            logger.info(f"Fetching logs: {endpoint} with params {params}")
+
+            # Try monitor_get first, fallback to manual request
+            try:
+                if hasattr(self.api, 'monitor_get'):
+                    resp = self.api.monitor_get(endpoint, params)
+                    logs = resp.get('results', [])
+                else:
+                    raise AttributeError("No monitor_get method")
+            except (AttributeError, Exception) as e:
+                logger.warning(f"monitor_get failed, using fallback: {e}")
+                # Fallback: manual request
+                base_url = self.api.base_url.replace('/cmdb/', '/monitor/')
+                url = f"{base_url}{endpoint}"
+                headers = {"Authorization": f"Bearer {self.api.token}"}
+                params['vdom'] = self.api.vdom
+
+                import urllib3
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+                resp = requests.get(
+                    url,
+                    headers=headers,
+                    params=params,
+                    timeout=30,
+                    verify=False
+                )
+
+                if resp.status_code != 200:
+                    result["error"] = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                    return result
+
+                data = resp.json()
+                logs = data.get('results', [])
+
+            result["success"] = True
+            result["logs"] = logs
+            result["count"] = len(logs)
+
+            self.cache["logs"].extend(logs)
+            self.cache["last_update"] = datetime.now().isoformat()
+            self._save_cache()
+
+            logger.info(f"Fetched {len(logs)} logs successfully")
+
+        except Exception as e:
+            result["error"] = str(e)
+            logger.error(f"Fetch logs error: {e}")
+
+        return result
 
     def analyze_logs(self, logs: List[Dict], analysis_type: str = "summary") -> Dict[str, any]:
         if not logs:
