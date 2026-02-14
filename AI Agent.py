@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """
-AI Agent - Intelligent FortiGate Assistant with Log Analysis (Enhanced + Fixed)
-Improvements & Fixes:
+AI Agent - Intelligent FortiGate Assistant with Log Analysis
+Features:
 - Uses .env for all credentials
-- Better LLM response parsing (robust regex for JSON extraction)
-- Enhanced error handling
+- Robust LLM response parsing with regex JSON extraction
+- Enhanced error handling throughout
 - Improved log analysis performance
 - Safer search operations
-- Fixed PUT endpoint construction (require name)
-- Optimized search_logs (avoid full json.dumps when possible)
-- Minor cleanups and safety checks
+- Fixed PUT endpoint construction (requires name)
+- Optimized search_logs
 """
 import argparse
 import json
@@ -166,72 +165,79 @@ class FortiGateLogAnalyzer:
         except Exception as e:
             logger.error(f"Cache save error: {e}")
 
-    def fetch_logs(self, log_query: LogQuery) -> Dict[str, any]:
-     result = {"success": False, "logs": [], "count": 0}
-    try:
-        endpoint = f"log/device/{log_query.category}"
-        if log_query.subcategory:
-            endpoint += f"/{log_query.subcategory}"
-        params = {"rows": min(log_query.limit, 1000)}
-        if log_query.start_time:
-            params["start"] = log_query.start_time
-        if log_query.filters:
-            params.update(log_query.filters)
-        
-        logger.info(f"Fetching logs: {endpoint} with params {params}")
-        
-        # Try monitor_get first, fallback to manual request
+    def fetch_logs(self, log_query: LogQuery) -> Dict:
+        """Fetch logs from FortiGate with fallback mechanism"""
+        result = {"success": False, "logs": [], "count": 0}
         try:
-            if hasattr(self.api, 'monitor_get'):
-                resp = self.api.monitor_get(endpoint, params)
-                logs = resp.get('results', [])
-            else:
-                raise AttributeError("No monitor_get method")
-        except (AttributeError, Exception) as e:
-            logger.warning(f"monitor_get failed, using fallback: {e}")
-            # Fallback: manual request
-            base_url = self.api.base_url.replace('/cmdb/', '/monitor/')
-            url = f"{base_url}{endpoint}"
-            headers = {"Authorization": f"Bearer {self.api.token}"}
-            params['vdom'] = self.api.vdom
-            
-            import urllib3
-            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-            
-            resp = requests.get(url, headers=headers, params=params, 
-                              timeout=30, verify=False)
-            
-            if resp.status_code != 200:
-                result["error"] = f"HTTP {resp.status_code}: {resp.text[:200]}"
-                return result
-            
-            data = resp.json()
-            logs = data.get('results', [])
-        
-        result["success"] = True
-        result["logs"] = logs
-        result["count"] = len(logs)
-        
-        self.cache["logs"].extend(logs)
-        self.cache["last_update"] = datetime.now().isoformat()
-        self._save_cache()
-        
-        logger.info(f"Fetched {len(logs)} logs successfully")
-        
-    except Exception as e:
-        result["error"] = str(e)
-        logger.error(f"Fetch logs error: {e}")
-    
-    return result
+            endpoint = f"log/device/{log_query.category}"
+            if log_query.subcategory:
+                endpoint += f"/{log_query.subcategory}"
 
-    def analyze_logs(self, logs: List[Dict], analysis_type: str = "summary") -> Dict[str, any]:
+            params = {"rows": min(log_query.limit, 1000)}
+            if log_query.start_time:
+                params["start"] = log_query.start_time
+            if log_query.filters:
+                params.update(log_query.filters)
+
+            logger.info(f"Fetching logs: {endpoint} with params {params}")
+
+            # Try monitor_get first, fallback to manual request
+            try:
+                if hasattr(self.api, 'monitor_get'):
+                    resp = self.api.monitor_get(endpoint, params)
+                    logs = resp.get('results', [])
+                else:
+                    raise AttributeError("No monitor_get method")
+            except (AttributeError, Exception) as e:
+                logger.warning(f"monitor_get failed, using fallback: {e}")
+                # Fallback: manual request
+                base_url = self.api.base_url.replace('/cmdb/', '/monitor/')
+                url = f"{base_url}{endpoint}"
+                headers = {"Authorization": f"Bearer {self.api.token}"}
+                params['vdom'] = self.api.vdom
+
+                import urllib3
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+                resp = requests.get(
+                    url, headers=headers, params=params,
+                    timeout=30, verify=False
+                )
+
+                if resp.status_code != 200:
+                    result["error"] = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                    return result
+
+                data = resp.json()
+                logs = data.get('results', [])
+
+            result["success"] = True
+            result["logs"] = logs
+            result["count"] = len(logs)
+
+            self.cache["logs"].extend(logs)
+            self.cache["last_update"] = datetime.now().isoformat()
+            self._save_cache()
+
+            logger.info(f"Fetched {len(logs)} logs successfully")
+
+        except Exception as e:
+            result["error"] = str(e)
+            logger.error(f"Fetch logs error: {e}")
+
+        return result
+
+    def analyze_logs(self, logs: List[Dict], analysis_type: str = "summary") -> Dict:
+        """Analyze logs and return statistics based on analysis type"""
         if not logs:
             return {"error": "No logs to analyze"}
+
         analysis = {
             "total_logs": len(logs),
             "analysis_type": analysis_type,
             "timestamp": datetime.now().isoformat()
         }
+
         try:
             if analysis_type == "summary":
                 actions = Counter(log.get('action', 'unknown') for log in logs)
@@ -242,12 +248,15 @@ class FortiGateLogAnalyzer:
                     "protocols": dict(protocols),
                     "top_services": dict(services.most_common(10))
                 })
+
             elif analysis_type == "top_sources":
                 sources = Counter(log.get('srcip', 'unknown') for log in logs)
                 analysis["top_sources"] = sources.most_common(10)
+
             elif analysis_type == "top_destinations":
                 destinations = Counter(log.get('dstip', 'unknown') for log in logs)
                 analysis["top_destinations"] = destinations.most_common(10)
+
             elif analysis_type == "blocked_traffic":
                 blocked = [log for log in logs if log.get('action') in ['deny', 'block', 'drop']]
                 blocked_sources = Counter(log.get('srcip', 'unknown') for log in blocked)
@@ -256,6 +265,7 @@ class FortiGateLogAnalyzer:
                     "blocked_percentage": (len(blocked) / len(logs) * 100) if logs else 0,
                     "top_blocked_sources": blocked_sources.most_common(5)
                 })
+
             elif analysis_type == "security_events":
                 security_logs = [log for log in logs if log.get('type') in ['utm', 'ips', 'av', 'waf']]
                 event_types = Counter(log.get('subtype', 'unknown') for log in security_logs)
@@ -264,35 +274,43 @@ class FortiGateLogAnalyzer:
                     "event_types": dict(event_types),
                     "security_percentage": (len(security_logs) / len(logs) * 100) if logs else 0
                 })
+
         except Exception as e:
             logger.error(f"Analysis error: {e}")
             analysis["error"] = str(e)
+
         return analysis
 
     def search_logs(self, keyword: str, logs: Optional[List[Dict]] = None) -> List[Dict]:
+        """Search logs by keyword across priority fields"""
         if logs is None:
             logs = self.cache.get("logs", [])
         if not keyword:
             return []
+
         results = []
         keyword_lower = keyword.lower()
-        # Priority fields for faster search
         priority_fields = ['srcip', 'dstip', 'srcport', 'dstport', 'action', 'msg', 'policyname', 'user']
+        broader_fields = ['srcname', 'dstname', 'service', 'proto']
+
         try:
             for log in logs:
                 # Fast check on priority fields
-                if any(keyword_lower in str(log.get(field, '')).lower() for field in priority_fields):
+                if any(keyword_lower in str(log.get(f, '')).lower() for f in priority_fields):
                     results.append(log)
+                    if len(results) >= 100:
+                        logger.info("Search limited to 100 results")
+                        break
                     continue
                 # Fallback: broader fields
-                broader_fields = ['srcname', 'dstname', 'service', 'proto']
-                if any(keyword_lower in str(log.get(field, '')).lower() for field in broader_fields):
+                if any(keyword_lower in str(log.get(f, '')).lower() for f in broader_fields):
                     results.append(log)
-                if len(results) >= 100:
-                    logger.info("Search limited to 100 results")
-                    break
+                    if len(results) >= 100:
+                        logger.info("Search limited to 100 results")
+                        break
         except Exception as e:
             logger.error(f"Search error: {e}")
+
         return results
 
 # ----------------------------- Security ------------------------------------
@@ -348,21 +366,24 @@ Rules:
 def parse_llm_response(llm_output: str) -> Tuple[Optional[APICall], Optional[LogQuery], Optional[str]]:
     if not llm_output:
         return None, None, None
+
     try:
         cleaned = llm_output.strip()
+
         # Extract from code blocks first
         code_block_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', cleaned, re.DOTALL | re.IGNORECASE)
         if code_block_match:
             cleaned = code_block_match.group(1)
         else:
-            # Fallback: extract any JSON object
             json_match = re.search(r'\{.*\}', cleaned, re.DOTALL)
             if json_match:
                 cleaned = json_match.group(0)
             else:
                 raise ValueError("No JSON found")
+
         data = json.loads(cleaned)
         response_type = data.get('type', 'config')
+
         if response_type == 'config':
             api_call = APICall(
                 operation=data['operation'],
@@ -374,6 +395,7 @@ def parse_llm_response(llm_output: str) -> Tuple[Optional[APICall], Optional[Log
                 warnings=data.get('warnings', [])
             )
             return api_call, None, None
+
         elif response_type == 'log_query':
             log_query_data = data.get('log_query', {})
             log_query = LogQuery(
@@ -386,7 +408,9 @@ def parse_llm_response(llm_output: str) -> Tuple[Optional[APICall], Optional[Log
             analysis_type = data.get('analysis_type', 'summary')
             search_keyword = data.get('search_keyword')
             return None, log_query, search_keyword if search_keyword else analysis_type
+
         return None, None, None
+
     except (json.JSONDecodeError, ValueError) as e:
         logger.error(f"JSON parse error: {e}\nOutput: {llm_output[:200]}")
         return None, None, None
@@ -395,33 +419,45 @@ def parse_llm_response(llm_output: str) -> Tuple[Optional[APICall], Optional[Log
         return None, None, None
 
 # ----------------------------- Request Analysis -----------------------------
-def analyze_request(user_request: str, llm_client: LLMClient) -> Tuple[Optional[APICall], Optional[LogQuery], str, Optional[str]]:
+def analyze_request(
+    user_request: str,
+    llm_client: LLMClient
+) -> Tuple[Optional[APICall], Optional[LogQuery], str, Optional[str]]:
+
     is_dangerous, matched = check_dangerous_request(user_request)
     if is_dangerous:
         return None, None, f"⚠️ Dangerous keywords detected: {', '.join(matched)}", None
+
     messages = [
         {"role": "system", "content": build_system_prompt()},
         {"role": "user", "content": user_request}
     ]
+
     llm_response = llm_client.chat(messages)
     if not llm_response:
         return None, None, "❌ LLM service unavailable", None
+
     logger.info(f"LLM Response: {llm_response[:200]}")
     api_call, log_query, extra = parse_llm_response(llm_response)
+
     if not api_call and not log_query:
         return None, None, "❌ Could not understand request", None
+
     if api_call and not validate_operation(api_call.operation):
         api_call.safe = False
         api_call.warnings.append(f"Operation '{api_call.operation}' is not allowed")
+
     return api_call, log_query, llm_response, extra
 
 # ----------------------------- Execute API Calls ---------------------------
 def execute_api_call(api: FortigateAPIHelper, api_call: APICall, dry_run: bool = False) -> Dict:
     result = {"success": False, "dry_run": dry_run}
+
     if dry_run:
         result["success"] = True
         result["message"] = "✓ Dry-run mode - no changes made"
         return result
+
     try:
         if api_call.method == "GET":
             response = api.get(api_call.endpoint)
@@ -437,44 +473,64 @@ def execute_api_call(api: FortigateAPIHelper, api_call: APICall, dry_run: bool =
             response = api.delete(api_call.endpoint)
         else:
             raise ValueError(f"Unsupported method: {api_call.method}")
+
         result["success"] = True
         result["response"] = response
+
     except Exception as e:
         result["error"] = str(e)
         logger.error(f"Execution error: {e}")
+
     return result
 
 # ----------------------------- Execute Log Queries -------------------------
-def execute_log_query(log_analyzer: FortiGateLogAnalyzer, log_query: LogQuery, extra: Optional[str] = None) -> Dict:
+def execute_log_query(
+    log_analyzer: FortiGateLogAnalyzer,
+    log_query: LogQuery,
+    extra: Optional[str] = None
+) -> Dict:
     result = {"success": False}
+
     try:
         fetch_result = log_analyzer.fetch_logs(log_query)
         if not fetch_result.get("success"):
             result["error"] = fetch_result.get("error")
             return result
+
         logs = fetch_result["logs"]
         result["log_count"] = len(logs)
-        if extra and extra not in ['summary', 'top_sources', 'top_destinations', 'blocked_traffic', 'security_events']:
+
+        # If extra is a keyword (not an analysis type), do a search
+        valid_analysis_types = {'summary', 'top_sources', 'top_destinations', 'blocked_traffic', 'security_events'}
+        if extra and extra not in valid_analysis_types:
             search_results = log_analyzer.search_logs(extra, logs)
-            result.update({"success": True, "search_keyword": extra, "results": search_results, "result_count": len(search_results)})
+            result.update({
+                "success": True,
+                "search_keyword": extra,
+                "results": search_results,
+                "result_count": len(search_results)
+            })
             return result
+
         analysis_type = extra or "summary"
         analysis = log_analyzer.analyze_logs(logs, analysis_type)
         result.update({"success": True, "analysis": analysis})
+
     except Exception as e:
         result["error"] = str(e)
         logger.error(f"Log query error: {e}")
-    return result
-# ----------------------------- Display Functions ---------------------------
 
+    return result
+
+# ----------------------------- Display Functions ---------------------------
 def display_api_call(api_call: APICall):
     print("\n" + "="*60)
     print("📋 Suggested API Call")
     print("="*60)
-    print(f"Operation: {api_call.operation}")
+    print(f"Operation:   {api_call.operation}")
     print(f"Description: {api_call.description}")
-    print(f"Method: {api_call.method}")
-    print(f"Endpoint: {api_call.endpoint}")
+    print(f"Method:      {api_call.method}")
+    print(f"Endpoint:    {api_call.endpoint}")
     if api_call.data:
         print(f"\nData:")
         print(json.dumps(api_call.data, indent=2, ensure_ascii=False))
@@ -501,38 +557,45 @@ def display_log_results(result: Dict):
     print("\n" + "="*60)
     print("📈 Results")
     print("="*60)
+
     if "search_keyword" in result:
-        print(f"Search: {result['search_keyword']}")
-        print(f"Found: {result['result_count']}")
+        print(f"Search:  {result['search_keyword']}")
+        print(f"Found:   {result['result_count']}")
         if result['result_count'] > 0:
-            print("\nSample:")
+            print("\nSample (top 5):")
             for i, log in enumerate(result['results'][:5], 1):
-                print(f"{i}. {log.get('srcip')} → {log.get('dstip')} | {log.get('action')}")
+                print(f"  {i}. {log.get('srcip')} → {log.get('dstip')} | {log.get('action')}")
+
     elif "analysis" in result:
         analysis = result["analysis"]
         print(f"Total Logs: {analysis.get('total_logs', 0)}")
         atype = analysis.get("analysis_type")
+
         if atype == "summary" and "actions" in analysis:
             print("\nActions:")
             for action, count in analysis["actions"].items():
                 print(f"  {action}: {count}")
+
         elif atype == "top_sources":
             print("\nTop Sources:")
             for ip, count in analysis.get("top_sources", []):
                 print(f"  {ip}: {count}")
+
         elif atype == "top_destinations":
             print("\nTop Destinations:")
             for ip, count in analysis.get("top_destinations", []):
                 print(f"  {ip}: {count}")
+
         elif atype == "blocked_traffic":
-            print(f"\nBlocked: {analysis.get('total_blocked', 0)}")
+            print(f"\nBlocked:    {analysis.get('total_blocked', 0)}")
             print(f"Percentage: {analysis.get('blocked_percentage', 0):.2f}%")
+
         elif atype == "security_events":
             print(f"\nSecurity Events: {analysis.get('total_security_events', 0)}")
+
     print("\n" + "="*60)
 
 # ----------------------------- Interactive Session -------------------------
-
 def yes_no(prompt: str, default: bool = False) -> bool:
     suffix = " [Y/n]: " if default else " [y/N]: "
     response = input(prompt + suffix).strip().lower()
@@ -545,13 +608,17 @@ def save_audit(action: AgentAction):
                 audit = json.load(f)
         except FileNotFoundError:
             audit = {"actions": []}
+
         audit["actions"].append(asdict(action))
+
         with open(AUDIT_LOG, 'w', encoding='utf-8') as f:
             json.dump(audit, f, indent=2, ensure_ascii=False)
+
     except Exception as e:
         logger.error(f"Audit save error: {e}")
 
-def interactive_session(api: FortigateAPIHelper, llm_client: LLMClient, log_analyzer: FortiGateLogAnalyzer, args):
+def interactive_session(api: FortigateAPIHelper, llm_client: LLMClient,
+                        log_analyzer: FortiGateLogAnalyzer, args):
     print("\n" + "="*60)
     print("   🤖 FortiGate Assistant with Log Analysis")
     print("="*60)
@@ -562,12 +629,14 @@ def interactive_session(api: FortigateAPIHelper, llm_client: LLMClient, log_anal
     print("  • Search for 192.168.1.50")
     print("\nType 'exit' to quit")
     print("="*60 + "\n")
+
     while True:
         try:
             req = input("\n💬 Request: ").strip()
             if not req or req.lower() in ['exit', 'quit']:
                 print("\n👋 Goodbye!")
                 break
+
             action = AgentAction(
                 timestamp=datetime.now().isoformat(),
                 user_request=req,
@@ -577,14 +646,17 @@ def interactive_session(api: FortigateAPIHelper, llm_client: LLMClient, log_anal
                 confirmed=False,
                 executed=False
             )
+
             print("\n🔍 Analyzing...")
             api_call, log_query, interp, extra = analyze_request(req, llm_client)
             action.llm_interpretation = interp
+
             if not api_call and not log_query:
                 print(f"\n❌ {interp}")
                 action.error = interp
                 save_audit(action)
                 continue
+
             if api_call:
                 action.api_call = api_call
                 if not api_call.safe:
@@ -592,44 +664,51 @@ def interactive_session(api: FortigateAPIHelper, llm_client: LLMClient, log_anal
                     if not args.force and not yes_no("Continue?"):
                         save_audit(action)
                         continue
+
                 display_api_call(api_call)
                 if not args.force and not yes_no("\nExecute?"):
                     save_audit(action)
                     continue
+
                 action.confirmed = True
                 print("\n⚙️ Executing...")
                 result = execute_api_call(api, api_call, args.dry_run)
                 action.result = result
                 action.executed = result.get('success', False)
+
                 if result.get('success'):
                     print("\n✅ Success!")
                 else:
                     print(f"\n❌ {result.get('error')}")
+
             elif log_query:
                 action.log_query = log_query
                 display_log_query(log_query, extra)
                 if not args.force and not yes_no("\nExecute?", True):
                     save_audit(action)
                     continue
+
                 action.confirmed = True
                 print("\n⚙️ Fetching logs...")
                 result = execute_log_query(log_analyzer, log_query, extra)
                 action.result = result
                 action.executed = result.get('success', False)
+
                 if result.get('success'):
                     display_log_results(result)
                 else:
                     print(f"\n❌ {result.get('error')}")
+
             save_audit(action)
+
         except KeyboardInterrupt:
             print("\n\n🛑 Stopped")
             break
         except Exception as e:
-            logger.exception("Error")
+            logger.exception("Error in interactive session")
             print(f"\n❌ {e}")
 
 # ----------------------------- Main ----------------------------------------
-
 def build_parser():
     p = argparse.ArgumentParser(description="AI Agent with Log Analysis")
     p.add_argument("--ip", default=DEFAULT_FGT_IP)
@@ -646,12 +725,14 @@ def main():
     api = FortigateAPIHelper(base_url, args.token, args.vdom)
     llm_client = LLMClient()
     log_analyzer = FortiGateLogAnalyzer(api)
+
     print("\n" + "="*60)
     print("   AI AGENT + LOG ANALYSIS")
     print("="*60)
     print(f"FortiGate: {args.ip}")
-    print(f"Mode: {'DRY RUN' if args.dry_run else 'LIVE'}")
+    print(f"Mode:      {'DRY RUN' if args.dry_run else 'LIVE'}")
     print("="*60)
+
     try:
         if args.single:
             api_call, log_query, interp, extra = analyze_request(args.single, llm_client)
@@ -673,11 +754,12 @@ def main():
         else:
             interactive_session(api, llm_client, log_analyzer, args)
             return 0
+
     except KeyboardInterrupt:
         return 130
     except Exception as e:
-        logger.exception("Failed")
+        logger.exception("Fatal error in main")
         return 1
-        
+
 if __name__ == "__main__":
     exit(main())
