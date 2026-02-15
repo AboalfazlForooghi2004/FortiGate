@@ -18,7 +18,7 @@ fortigate-automation/
 ├── Multi-Policy.py             # Jinja2 template-based config & HTML reports
 │
 ├── fortigate_api_helper.py     # API helper (used by AI Agent)
-├── fortigate_api_helper_v2.py  # Enhanced API helper v2 (used by phases 1–5)
+|
 ├── error_handler.py            # Central error handling, decorators, recovery
 ├── logging_config.py           # Syslog + console logging setup
 │
